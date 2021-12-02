@@ -1,0 +1,1 @@
+val res = List(1, 2) == List(2, 1)

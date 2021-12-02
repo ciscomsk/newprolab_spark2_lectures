@@ -70,6 +70,44 @@ object FileHelper {
       stringSeq.mkString(",")
     }
 
+  /** PrunedScan. */
+  def fromCsv(filePath: String, schema: StructType, requiredColumns: Array[String]): Iterator[InternalRow] = {
+    /** Схема полностью совпадает с выбранными колонками. */
+    if (schema.fieldNames.toList == requiredColumns.toList) fromCsv(filePath, schema)
+    else {
+      val file: BufferedSource = Source.fromFile(filePath)
+      val lines = file.getLines
+
+      lines.map { line =>
+        /** 1, hello world, 0 => Array(1, hello world, 0) */
+        val split: Array[String] = line.split(",", -1)
+        if (split.length != schema.length) throw new IllegalArgumentException(s"Schema does not match: ${schema.simpleString}")
+
+        /** Array(1, hello world, 0) zip Array("id": LongType, "value": StringType, "part_id": IntegerType */
+        val zipped: Array[(String, DataType)] = split.zip(schema.map(_.dataType))
+
+        /** "value", "id" */
+        val projected: Array[(String, DataType)] =
+          requiredColumns
+            .map { colName =>
+              /** "value" => 1, "id" => 0 */
+              val colIdx: Int = schema.fieldIndex(colName)
+              zipped(colIdx)
+            }
+
+        val typedDate: Array[Any] = projected.map {
+          case (s, LongType) => java.lang.Long.valueOf(s.toLong)
+          case (s, IntegerType) => java.lang.Integer.valueOf(s.toInt)
+          case (s, StringType) => UTF8String.fromString(s)
+          case (s, dt) => throw new UnsupportedOperationException(s"$s of type ${dt.simpleString} is not supported!")
+        }
+
+        InternalRow.fromSeq(typedDate)
+      }
+    }
+  }
+
+  /** TableScan. */
   def fromCsv(filePath: String, schema: StructType): Iterator[InternalRow] = {
     val file: BufferedSource = Source.fromFile(filePath)
     val lines = file.getLines
@@ -90,7 +128,6 @@ object FileHelper {
 
       InternalRow.fromSeq(typedDate)
     }
-
   }
 
 }

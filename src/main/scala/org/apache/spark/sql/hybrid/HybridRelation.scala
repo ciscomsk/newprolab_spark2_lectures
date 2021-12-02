@@ -5,12 +5,10 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.{DataFrame, Row, SQLContext, SaveMode, SparkSession}
-import org.apache.spark.sql.sources.{BaseRelation, CreatableRelationProvider, DataSourceRegister, RelationProvider, SchemaRelationProvider, TableScan}
-import org.apache.spark.sql.types.{ArrayType, DataType, LongType, MapType, StringType, StructField, StructType}
-import org.apache.spark.unsafe.types.UTF8String
+import org.apache.spark.sql.sources.{BaseRelation, CreatableRelationProvider, DataSourceRegister, PrunedScan, RelationProvider, SchemaRelationProvider, TableScan}
+import org.apache.spark.sql.types.{ArrayType, MapType, StructType}
 
 import java.io.File
-import java.lang
 
 /** Класс инстанциируется на драйвере. */
 class HybridRelation extends CreatableRelationProvider
@@ -95,7 +93,8 @@ class HybridRelation extends CreatableRelationProvider
 }
 
 class HybridBaseRelation(parameters: Map[String, String], usedSchema: StructType) extends BaseRelation
-  with TableScan
+//  with TableScan
+  with PrunedScan
   with Logging {
 
   log.info(s"${this.logName} has been created.")
@@ -110,22 +109,34 @@ class HybridBaseRelation(parameters: Map[String, String], usedSchema: StructType
   /** Для того, чтобы работать с InternalRow, а не автоматической конвертаций в Row. */
   override def needConversion: Boolean = false
 
-  override def buildScan(): RDD[Row] = {
-    log.info("buildScan call.")
+  /** TableScan. */
+//  override def buildScan(): RDD[Row] = {
+//    log.info("buildScan call: TableScan.")
+//
+//    /** needConversion = false - InternalRow => Row */
+//    new CsvRdd(parameters, schema).asInstanceOf[RDD[Row]]
+//  }
 
-    /** needConversion = false - InternalRow => Row */
-    new CsvRdd(parameters, schema).asInstanceOf[RDD[Row]]
+  /** PrunedScan. */
+  override def buildScan(requiredColumns: Array[String]): RDD[Row] = {
+    log.info("buildScan call: PrunedScan.")
+    log.info(s"${requiredColumns.mkString("Array(", ", ", ")")}")
+    log.info(s"${schema.simpleString}")
+
+    new CsvRdd(parameters, schema, requiredColumns).asInstanceOf[RDD[Row]]
   }
-
 }
 
-class CsvRdd(parameters: Map[String, String], schema: StructType) extends RDD[InternalRow](SparkSession.active.sparkContext, Nil) with Logging {
+class CsvRdd(parameters: Map[String, String],
+             schema: StructType,
+             requiredColumns: Array[String]) extends RDD[InternalRow](SparkSession.active.sparkContext, Nil) with Logging {
+
   val readDirectory: String = parameters.getOrElse("path", throw new IllegalArgumentException("path must be set"))
   val files: Array[File] = FileHelper.getFiles(readDirectory).filter(file => file.isFile && file.getName.endsWith("csv"))
 
   override def compute(split: Partition, context: TaskContext): Iterator[InternalRow] = {
     val csvPartition: CsvPartition = split.asInstanceOf[CsvPartition]
-    FileHelper.fromCsv(csvPartition.path, schema)
+    FileHelper.fromCsv(csvPartition.path, schema, requiredColumns)
   }
 
   override protected def getPartitions: Array[Partition] =
