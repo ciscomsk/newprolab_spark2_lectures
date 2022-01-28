@@ -13,7 +13,7 @@ object AntiPatterns_2 extends SparkCommons with App {
 
   /**
    * 4. Неявный повторный вызов Scala UDF.
-   * Проявляется при работе с нескалярными данными - array/struct и дальшейней работе с их элементами.
+   * Проявляется при работе с нескалярными данными - array/struct и дальнейшей работе с их элементами.
    * Если внутри проекции несколько раз присутствует вызов UDF, то под капотом она будет вызвана несколько раз на каждую строчку.
    */
   val udf_empty_list1: UserDefinedFunction = udf { () => { Thread.sleep(1000); List.empty[Int] } }
@@ -203,7 +203,7 @@ object AntiPatterns_2 extends SparkCommons with App {
 
   /**
    * 6. Использование Dataset API трансформаций.
-   * Под капотомм Dataset API могут возникать дополнительные физические операторы.
+   * Под капотом Dataset API могут возникать дополнительные физические операторы.
    */
 
   val testDf: Dataset[lang.Long] =

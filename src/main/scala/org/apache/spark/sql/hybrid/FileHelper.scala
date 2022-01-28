@@ -1,6 +1,7 @@
 package org.apache.spark.sql.hybrid
 
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.sources.{EqualTo, Filter, IsNotNull, StringContains}
 import org.apache.spark.sql.types.{DataType, IntegerType, LongType, StringType, StructField, StructType}
 import org.apache.spark.unsafe.types.UTF8String
 
@@ -69,6 +70,73 @@ object FileHelper {
 
       stringSeq.mkString(",")
     }
+
+  def checkCondition(row: Array[Any], filter: Filter, schema: StructType): Boolean = {
+    filter match {
+      /** attribute - имя поля. */
+      case IsNotNull(attribute) =>
+        val colIdx: Int = schema.fieldIndex(attribute)
+        val data: Any = row(colIdx)
+        data != null
+
+      case EqualTo(attribute, value) =>
+        val colIdx: Int = schema.fieldIndex(attribute)
+        val data: Any = row(colIdx)
+        data == value
+
+      case StringContains(attribute, value) =>
+        val colIdx: Int = schema.fieldIndex(attribute)
+        val data: UTF8String = row(colIdx).asInstanceOf[UTF8String]
+
+        if (data != null) data.contains(UTF8String.fromString(value))
+        else false
+
+      case f =>
+        throw new UnsupportedOperationException(s"$f is not supported")
+    }
+  }
+
+  /** PrunedFilteredScan. */
+  def fromCsv(filePath: String,
+              schema: StructType,
+              requiredColumns: Array[String],
+              pushedFilters: Array[Filter]): Iterator[InternalRow] = {
+
+    if (pushedFilters.isEmpty) fromCsv(filePath, schema, requiredColumns)
+    else {
+      val file: BufferedSource = Source.fromFile(filePath)
+      val lines = file.getLines
+
+      /** lines.flatMap => Some(InternalRow.fromSeq(typedDate)) */
+      lines.flatMap { line =>
+        val split: Array[String] = line.split(",", -1)
+        if (split.length != schema.length) throw new IllegalArgumentException(s"Schema does not match: ${schema.simpleString}")
+
+        val zipped: Array[(String, DataType)] = split.zip(schema.map(_.dataType))
+
+        val typedData: Array[Any] = zipped.map {
+          case (s, LongType) => if (s.nonEmpty) java.lang.Long.valueOf(s.toLong) else null
+          case (s, IntegerType) => if (s.nonEmpty) java.lang.Integer.valueOf(s.toInt) else null
+          case (s, StringType) => if (s.nonEmpty) UTF8String.fromString(s) else null
+          case (s, dt) => throw new UnsupportedOperationException(s"$s of type ${dt.simpleString} is not supported!")
+        }
+
+        val projected: Array[Any] =
+          requiredColumns.map { colName =>
+            val colIdx: Int = schema.fieldIndex(colName)
+            typedData(colIdx)
+          }
+
+        val meetsCondition: Boolean =
+          pushedFilters
+            .map(filter => checkCondition(typedData, filter, schema))
+            .reduce(_ && _)
+
+        if (meetsCondition) Some(InternalRow.fromSeq(projected))
+        else None
+      }
+    }
+  }
 
   /** PrunedScan. */
   def fromCsv(filePath: String, schema: StructType, requiredColumns: Array[String]): Iterator[InternalRow] = {

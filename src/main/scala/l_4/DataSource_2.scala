@@ -79,6 +79,18 @@ object DataSource_2 {
   /** package org.apache.spark.sql.sources */
   /*
     /**
+     * A filter predicate for data sources. Mapping between Spark SQL types and filter value
+     * types follow the convention for return type of [[org.apache.spark.sql.Row#get(int)]].
+     *
+     * @since 1.3.0
+     */
+    @Stable
+    sealed abstract class Filter {
+    ...
+    }
+   */
+  /*
+    /**
      * A filter that evaluates to `true` iff the column evaluates to a value
      * equal to `value`.
      *

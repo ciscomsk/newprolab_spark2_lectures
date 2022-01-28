@@ -1,6 +1,6 @@
 package org.apache.spark.sql.hybrid
 
-import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.{DataFrame, Dataset, Row}
 import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructField, StructType}
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should
@@ -25,19 +25,26 @@ class DataSourceReadSpec extends AnyFlatSpec with should.Matchers with SparkComm
       .option("path", "src/main/resources/l_3/test-hybrid")
       .load
 
-  "Reader" should "read" in {
-    df.printSchema
+  val dfWithNull: DataFrame =
+    spark
+      .read
+      .format("hybrid-csv")
+      .schema(schema)
+      .option("path", "src/main/resources/l_4/hybrid-null")
+      .load
 
+  "Reader" should "read" in {
+//    df.printSchema
 //    df.show
 
-    df
-//      .select($"value")
-//      .select($"value", $"id")
-      .select($"value", $"id", $"part_id")
-//      .select($"id")
-//      .select($"id", $"value", $"part_id")
-//      .select($"part_id", $"id")
-      .explain(true)
+//    df
+////      .select($"value")
+////      .select($"value", $"id")
+//      .select($"value", $"id", $"part_id")
+////      .select($"id")
+////      .select($"id", $"value", $"part_id")
+////      .select($"part_id", $"id")
+////      .explain(true)
 //      .show()
 
 //    df
@@ -71,9 +78,84 @@ class DataSourceReadSpec extends AnyFlatSpec with should.Matchers with SparkComm
    */
 
   /**
-   * l_4
+   * l_4_1
    *
    * 1. scala.NotImplementedError
    * => 2. java.lang.ClassCastException: java.lang.Long cannot be cast to org.apache.spark.unsafe.types.UTF8String
    */
+
+  "Column pruning" should "work 1" in {
+    val filteredDf: DataFrame = df.select($"value", $"id", $"part_id")
+    filteredDf.show()
+  }
+
+  "Predicate pushdown" should "work" in {
+    val filteredDf: DataFrame =
+      df
+        //        .filter($"id" === 2)
+        //        .filter($"value".contains("hello"))
+        .filter($"id" > 0)
+        //        .filter($"value" === "hello world")
+        .filter($"value" === "hello world1")
+        .select($"value", $"id", $"part_id")
+
+//    filteredDf.explain(extended = true)
+//    filteredDf.show()
+
+    filteredDf.count() shouldBe 0
+  }
+
+  /**
+   * l_4_2
+   *
+   * 1. java.lang.ArrayIndexOutOfBoundsException - count делает проекцию в 0 колонок.
+   * Ошибка была в порядке действий - сначала проекция (с пустым массивом колонок), потом фильтрация по пустой проекции. Надо наоборот.
+   */
+
+  it should "work with nulls 1" in {
+    dfWithNull.show()
+    println(dfWithNull.count())
+  }
+
+  it should "work with nulls 2" in {
+    val filteredDfWithNull: Dataset[Row] = dfWithNull.filter($"value".isNotNull)
+    filteredDfWithNull.show()
+  }
+
+  it should "work with contains" in {
+    val filteredDfWithNull: Dataset[Row] = dfWithNull.filter($"value".contains("hello"))
+    filteredDfWithNull.show()
+  }
+
+  /**
+   * l_4_3
+   *
+   * 1. java.lang.NullPointerException - т.е. contains не был null safe. Сделали null safe.
+   */
+
+  it should "work with different type in condition" in {
+    val filteredDfWithNull: Dataset[Row] = dfWithNull.filter($"id" === 1) // Long == Int
+
+    filteredDfWithNull.explain(extended = true)
+    /** Analyzed Logical Plan => Filter (id#6L = cast(1 as bigint)), т.е. каталист скастил в нужный тип. */
+    /*
+      == Parsed Logical Plan ==
+      'Filter ('id = 1)
+      +- Relation [id#6L,value#7,part_id#8] org.apache.spark.sql.hybrid.HybridBaseRelation@7e18ced7
+
+      == Analyzed Logical Plan ==
+      id: bigint, value: string, part_id: int
+      Filter (id#6L = cast(1 as bigint))
+      +- Relation [id#6L,value#7,part_id#8] org.apache.spark.sql.hybrid.HybridBaseRelation@7e18ced7
+
+      == Optimized Logical Plan ==
+      Filter (isnotnull(id#6L) AND (id#6L = 1))
+      +- Relation [id#6L,value#7,part_id#8] org.apache.spark.sql.hybrid.HybridBaseRelation@7e18ced7
+
+      == Physical Plan ==
+      *(1) Scan org.apache.spark.sql.hybrid.HybridBaseRelation@7e18ced7 [id#6L,value#7,part_id#8] PushedAggregates: [], PushedFilters: [*IsNotNull(id), *EqualTo(id,1)], PushedGroupby: [], ReadSchema: struct<id:bigint,value:string,part_id:int>
+     */
+
+    filteredDfWithNull.show()
+  }
 }
